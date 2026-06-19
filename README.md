@@ -6,6 +6,7 @@ macOS 菜单栏温度监控工具，适用于 Apple Silicon Mac。
 
 - 菜单栏实时显示 CPU 最高温度
 - 点击查看 CPU / GPU 详细温度信息
+- 显示实时充电功率
 - 显示热压力状态
 - 每 5 秒自动刷新
 - Universal Binary（支持 arm64）
@@ -17,6 +18,7 @@ macOS 菜单栏温度监控工具，适用于 Apple Silicon Mac。
 - CPU 最高温度 / 平均温度
 - GPU 最高温度 / 平均温度
 - 热压力状态
+- 实时充电功率
 - 更新时间
 
 ## 安装

@@ -68,6 +68,7 @@ final class StatusBarController: NSObject {
 
         menu.addItem(.separator())
         menu.addItem(blackItem("热压力: \(snapshot.thermalPressure)"))
+        menu.addItem(blackItem("充电功率: \(TemperatureModel.chargingPowerText(snapshot: snapshot))"))
         menu.addItem(blackItem("更新时间: \(TemperatureModel.timestampText(snapshot.timestamp))"))
         menu.addItem(.separator())
 

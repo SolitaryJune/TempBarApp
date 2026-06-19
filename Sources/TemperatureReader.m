@@ -1,6 +1,7 @@
 #import "TemperatureReader.h"
 
 #include <Foundation/Foundation.h>
+#include <IOKit/IOKitLib.h>
 #include <IOKit/hidsystem/IOHIDEventSystemClient.h>
 
 typedef struct __IOHIDEvent *IOHIDEventRef;
@@ -37,6 +38,10 @@ CFArrayRef IOHIDEventSystemClientCopyServices(IOHIDEventSystemClientRef client);
                         gpuReadings:(NSArray<TemperatureReading *> *)gpuReadings
                         allReadings:(NSArray<TemperatureReading *> *)allReadings
                     thermalPressure:(NSString *)thermalPressure
+                          hasBattery:(BOOL)hasBattery
+                           isCharging:(BOOL)isCharging
+              isExternalPowerConnected:(BOOL)isExternalPowerConnected
+                   chargingPowerWatts:(NSNumber *)chargingPowerWatts
                           timestamp:(NSDate *)timestamp {
     self = [super init];
     if (self) {
@@ -44,11 +49,23 @@ CFArrayRef IOHIDEventSystemClientCopyServices(IOHIDEventSystemClientRef client);
         _gpuReadings = gpuReadings;
         _allReadings = allReadings;
         _thermalPressure = [thermalPressure copy];
+        _hasBattery = hasBattery;
+        _isCharging = isCharging;
+        _isExternalPowerConnected = isExternalPowerConnected;
+        _chargingPowerWatts = chargingPowerWatts;
         _timestamp = timestamp;
     }
     return self;
 }
 @end
+
+typedef struct {
+    BOOL hasBattery;
+    BOOL isCharging;
+    BOOL isExternalPowerConnected;
+    BOOL hasChargingPowerWatts;
+    double chargingPowerWatts;
+} ChargingPowerInfo;
 
 static CFDictionaryRef Matching(int page, int usage) {
     CFStringRef keys[2];
@@ -149,6 +166,66 @@ static NSString *ThermalPressureString(void) {
     }
 }
 
+static NSDictionary *AppleSmartBatteryProperties(void) {
+    io_service_t battery = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
+    if (battery == MACH_PORT_NULL) {
+        return nil;
+    }
+
+    CFMutableDictionaryRef properties = NULL;
+    kern_return_t result = IORegistryEntryCreateCFProperties(battery, &properties, kCFAllocatorDefault, 0);
+    IOObjectRelease(battery);
+
+    if (result != KERN_SUCCESS || properties == NULL) {
+        return nil;
+    }
+
+    return CFBridgingRelease(properties);
+}
+
+static NSNumber *NumberValue(NSDictionary *dictionary, NSString *key) {
+    id value = dictionary[key];
+    return [value isKindOfClass:[NSNumber class]] ? value : nil;
+}
+
+static NSDictionary *DictionaryValue(NSDictionary *dictionary, NSString *key) {
+    id value = dictionary[key];
+    return [value isKindOfClass:[NSDictionary class]] ? value : nil;
+}
+
+static ChargingPowerInfo ReadChargingPowerInfo(void) {
+    ChargingPowerInfo info = {0};
+    NSDictionary *battery = AppleSmartBatteryProperties();
+    if (battery == nil) {
+        return info;
+    }
+
+    info.hasBattery = YES;
+    info.isCharging = NumberValue(battery, @"IsCharging").boolValue;
+    info.isExternalPowerConnected = NumberValue(battery, @"ExternalConnected").boolValue;
+    if (!info.isCharging) {
+        return info;
+    }
+
+    NSDictionary *telemetry = DictionaryValue(battery, @"PowerTelemetryData");
+    NSNumber *telemetryBatteryPower = NumberValue(telemetry, @"BatteryPower");
+    if (telemetryBatteryPower.doubleValue > 0.0) {
+        info.hasChargingPowerWatts = YES;
+        info.chargingPowerWatts = telemetryBatteryPower.doubleValue / 1000.0;
+        return info;
+    }
+
+    NSNumber *voltage = NumberValue(battery, @"Voltage");
+    NSNumber *amperage = NumberValue(battery, @"InstantAmperage") ?: NumberValue(battery, @"Amperage");
+    double watts = voltage.doubleValue * amperage.doubleValue / 1000000.0;
+    if (watts > 0.0) {
+        info.hasChargingPowerWatts = YES;
+        info.chargingPowerWatts = watts;
+    }
+
+    return info;
+}
+
 @implementation TemperatureReader
 
 - (TemperatureSnapshot *)readSnapshot {
@@ -181,10 +258,16 @@ static NSString *ThermalPressureString(void) {
     }
 
     NSArray<TemperatureReading *> *gpuReadings = explicitGPUReadings.count > 0 ? explicitGPUReadings : fallbackGPUReadings;
+    ChargingPowerInfo chargingPowerInfo = ReadChargingPowerInfo();
+    NSNumber *chargingPowerWatts = chargingPowerInfo.hasChargingPowerWatts ? @(chargingPowerInfo.chargingPowerWatts) : nil;
     return [[TemperatureSnapshot alloc] initWithCPUReadings:cpuReadings
                                                 gpuReadings:gpuReadings
                                                 allReadings:allReadings
                                             thermalPressure:ThermalPressureString()
+                                                 hasBattery:chargingPowerInfo.hasBattery
+                                                  isCharging:chargingPowerInfo.isCharging
+                                    isExternalPowerConnected:chargingPowerInfo.isExternalPowerConnected
+                                        chargingPowerWatts:chargingPowerWatts
                                                   timestamp:[NSDate date]];
 }
 

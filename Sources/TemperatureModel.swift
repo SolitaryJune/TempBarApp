@@ -33,4 +33,17 @@ enum TemperatureModel {
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: date)
     }
+
+    static func chargingPowerText(snapshot: TemperatureSnapshot) -> String {
+        if let watts = snapshot.chargingPowerWatts?.doubleValue {
+            return String(format: "%.1f W", watts)
+        }
+        if !snapshot.hasBattery {
+            return "不适用"
+        }
+        if snapshot.isExternalPowerConnected {
+            return snapshot.isCharging ? "计算中" : "未充电"
+        }
+        return "未接入电源"
+    }
 }

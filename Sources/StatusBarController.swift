@@ -16,11 +16,10 @@ final class StatusBarController: NSObject {
             self?.refresh()
         }
         RunLoop.main.add(timer!, forMode: .common)
-        // Re-sync the last chosen LED settings once the helper daemon is reachable.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            MagSafeLEDPrefs.syncToDaemonIfUp()
-            self?.refresh()
-        }
+        // LED helper: the daemon (also auto-started at login) gets a moment to
+        // come up; if it never does, request admin authorization right away —
+        // the install is built into app startup, not a menu step.
+        scheduleAutoSetup()
     }
 
     private func refresh() {
@@ -122,8 +121,7 @@ final class StatusBarController: NSObject {
 
         guard let status = MagSafeLEDClient.shared.status(),
               (status["ok"] as? Bool) == true else {
-            menu.addItem(actionItem("安装 MagSafe 灯辅助工具…", represented: nil, action: #selector(ledInstallClicked)))
-            menu.addItem(blackItem("  (需要一次管理员授权)"))
+            menu.addItem(actionItem("启用 MagSafe 灯控制…(需一次管理员授权)", represented: nil, action: #selector(ledInstallClicked)))
             return
         }
 
@@ -176,6 +174,53 @@ final class StatusBarController: NSObject {
         refresh()
     }
 
+    // MARK: MagSafe LED helper lifecycle
+
+    private var installCancelledThisSession = false
+
+    /// Waits for the auto-started daemon, then auto-installs it (admin dialog)
+    /// unless the user explicitly uninstalled it or cancelled earlier.
+    private func scheduleAutoSetup() {
+        DispatchQueue.global().async { [weak self] in
+            for _ in 0..<8 where MagSafeLEDClient.shared.status() == nil {
+                usleep(1_000_000)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if MagSafeLEDClient.shared.status() != nil {
+                    // daemon config is the source of truth on startup; the app
+                    // only writes when the user actively picks something
+                    self.refresh()
+                    return
+                }
+                if MagSafeLEDPrefs.helperRemovedByUser || self.installCancelledThisSession {
+                    self.refresh()
+                    return
+                }
+                self.installHelper()
+            }
+        }
+    }
+
+    /// Runs the privileged installer (admin authorization dialog); on success
+    /// waits for the daemon socket and pushes the stored settings.
+    private func installHelper() {
+        DispatchQueue.global().async { [weak self] in
+            let ok = MagSafeLEDInstaller.install()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if ok {
+                    MagSafeLEDPrefs.helperRemovedByUser = false
+                    // no config push here: the daemon persists its own settings
+                } else {
+                    // cancelled or failed: don't auto-prompt again this session
+                    self.installCancelledThisSession = true
+                }
+                self.refresh()
+            }
+        }
+    }
+
     @objc private func ledSetMode(_ sender: NSMenuItem) {
         MagSafeLEDPrefs.mode = sender.representedObject as? String ?? "system"
         applyLEDConfig()
@@ -216,30 +261,20 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func ledInstallClicked() {
-        if MagSafeLEDInstaller.install() {
-            // Wait briefly for the daemon socket, then push the stored settings.
-            for _ in 0..<10 where MagSafeLEDClient.shared.status() == nil {
-                usleep(200 * 1000)
-            }
-            MagSafeLEDPrefs.syncToDaemonIfUp()
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "安装未完成"
-            alert.informativeText = "需要管理员授权才能安装辅助工具;授权被取消或失败了。"
-            alert.runModal()
-        }
-        refresh()
+        installHelper()
     }
 
     @objc private func ledUninstallClicked() {
         let alert = NSAlert()
         alert.messageText = "卸载 MagSafe 灯辅助工具?"
-        alert.informativeText = "LED 将恢复系统默认,后台守护进程和配置会被移除(需要管理员授权)。"
+        alert.informativeText = "LED 将恢复系统默认,后台守护进程和配置会被移除(需要管理员授权)。卸载后再次启用需重新授权。"
         alert.addButton(withTitle: "卸载")
         alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn {
             MagSafeLEDInstaller.uninstall()
             MagSafeLEDPrefs.mode = "system"
+            MagSafeLEDPrefs.helperRemovedByUser = true
+            installCancelledThisSession = false
             refresh()
         }
     }

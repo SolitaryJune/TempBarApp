@@ -101,14 +101,15 @@ enum MagSafeLEDPrefs {
         set { d.set(newValue, forKey: "LEDPeriod") }
     }
 
-    static func syncToDaemon() {
-        MagSafeLEDClient.shared.set(mode: mode, color: color, period: period, wave: wave)
+    /// Set when the user deliberately uninstalled the helper, so app launches
+    /// don't nag for admin authorization again (menu offers a manual retry).
+    static var helperRemovedByUser: Bool {
+        get { d.bool(forKey: "LEDHelperRemovedByUser") }
+        set { d.set(newValue, forKey: "LEDHelperRemovedByUser") }
     }
 
-    static func syncToDaemonIfUp() {
-        if MagSafeLEDClient.shared.status() != nil {
-            syncToDaemon()
-        }
+    static func syncToDaemon() {
+        MagSafeLEDClient.shared.set(mode: mode, color: color, period: period, wave: wave)
     }
 }
 
@@ -119,6 +120,14 @@ enum MagSafeLEDInstaller {
 
     static var appBinaryPath: String {
         Bundle.main.executableURL?.path ?? (Bundle.main.bundlePath + "/Contents/MacOS/TempBarApp")
+    }
+
+    static var launchDaemonPlistPath: String {
+        "/Library/LaunchDaemons/\(daemonLabel).plist"
+    }
+
+    static func isPlistInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: launchDaemonPlistPath)
     }
 
     static func install() -> Bool {

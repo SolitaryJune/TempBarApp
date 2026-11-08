@@ -174,6 +174,24 @@ static kern_return_t smcWriteKey(const char key[4], const UInt8 *bytes, UInt32 s
     return smcCall(kSMCWriteBytes, &in, &out);
 }
 
+static kern_return_t smcReadByte(const char key[4], UInt8 *outValue)
+{
+    UInt32 packed = packKey(key);
+    UInt32 size = 0;
+    kern_return_t kr = smcKeyInfo(packed, &size);
+    if (kr != KERN_SUCCESS) return kr;
+    if (size == 0 || size > 32) return kIOReturnError;
+
+    SMCParam in, out;
+    memset(&in, 0, sizeof in);
+    memset(&out, 0, sizeof out);
+    in.key = packed;
+    in.keyInfo.dataSize = size;
+    kr = smcCall(kSMCReadBytes, &in, &out);
+    if (kr == KERN_SUCCESS) *outValue = out.bytes[0];
+    return kr;
+}
+
 static kern_return_t smcOpen(void)
 {
     io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault,
@@ -348,15 +366,24 @@ static void *serverLoop(void *unused)
 
 #pragma mark - Power events
 
-static void powerChanged(void *context)
+static void applyAfterDelay(int64_t seconds)
 {
-    (void)context;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        usleep(1000 * 1000); // let the SMC settle after plug/unplug events
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, seconds * NSEC_PER_SEC),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         lockState();
         applyLocked();
         unlockState();
     });
+}
+
+static void powerChanged(void *context)
+{
+    (void)context;
+    // macOS re-asserts its LED choice several times around power events
+    // (plug/unplug, charge-state transitions). Re-apply at +1 s and +4 s;
+    // the 2 s enforcement timer below catches anything else.
+    applyAfterDelay(1);
+    applyAfterDelay(4);
 }
 
 #pragma mark - Entry points
@@ -417,8 +444,24 @@ int LEDHelperMain(int argc, char *argv[])
                                         CFAbsoluteTimeGetCurrent() + 1.0, 1.0, 0, 0,
                                         ^(CFRunLoopTimerRef timer) {
                                             (void)timer;
-                                            static int heartbeat = 0;
-                                            if (++heartbeat % 60 == 0) {
+                                            static int ticks = 0;
+                                            ticks++;
+                                            if (ticks % 2 == 0) {
+                                                // Enforcement: while off, macOS must
+                                                // not sneak the LED back on.
+                                                lockState();
+                                                if ([gMode isEqualToString:kModeOff]) {
+                                                    UInt8 current = 0;
+                                                    if (smcReadByte(kLEDKey, &current) == KERN_SUCCESS &&
+                                                        current != kLEDOffValue) {
+                                                        TSLOG("[tempbar-led] macOS re-asserted ACLC=%u while off — restoring\n",
+                                                              (unsigned)current);
+                                                        ledWrite(kLEDOffValue);
+                                                    }
+                                                }
+                                                unlockState();
+                                            }
+                                            if (ticks % 60 == 0) {
                                                 TSLOG("[tempbar-led] alive, pid=%d\n", getpid());
                                             }
                                             if (gStop) CFRunLoopStop(CFRunLoopGetMain());

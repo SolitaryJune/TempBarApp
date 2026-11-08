@@ -29,11 +29,13 @@
 #import <time.h>
 #import <string.h>
 
-static NSString * const kVersion     = @"1.3";
-static NSString * const kSocketPath  = @"/var/run/tempbar-led.sock";
-static NSString * const kSupportDir  = @"/Library/Application Support/TempBarApp";
-static NSString * const kConfigPath  = @"/Library/Application Support/TempBarApp/led-config.json";
-static NSString * const kDaemonLabel = @"local.TempBarApp.led-helper";
+static NSString * const kVersion       = @"1.3";
+static NSString * const kSocketPath    = @"/var/run/tempbar-led.sock";
+static NSString * const kSupportDir    = @"/Library/Application Support/TempBarApp";
+static NSString * const kConfigPath    = @"/Library/Application Support/TempBarApp/led-config.json";
+static NSString * const kLogPath       = @"/Library/Application Support/TempBarApp/helper.log";
+static NSString * const kDebugFlagPath = @"/Library/Application Support/TempBarApp/debug";
+static NSString * const kDaemonLabel   = @"local.TempBarApp.led-helper";
 
 static const char kLEDKey[] = "ACLC";
 
@@ -52,11 +54,38 @@ static volatile sig_atomic_t gStop = 0;
 static io_connect_t gSMC = 0;
 static UInt8 gLEDKeySize = 1;
 
-// Timestamped logging — the helper log is the only forensics we have.
+// Logging is OFF by default — zero disk writes. It activates only while the
+// debug flag file exists (re-checked once a minute, no restart needed):
+//   sudo touch  "/Library/Application Support/TempBarApp/debug"
+//   sudo rm     "/Library/Application Support/TempBarApp/debug"
+static FILE *gLogFile = NULL;
+
+static void updateLogFile(void)
+{
+    BOOL shouldLog = [[NSFileManager defaultManager] fileExistsAtPath:kDebugFlagPath];
+    if (shouldLog && !gLogFile) {
+        gLogFile = fopen(kLogPath.fileSystemRepresentation, "a");
+        if (gLogFile) {
+            time_t t = time(NULL); struct tm tmv; localtime_r(&t, &tmv);
+            char b[24]; strftime(b, sizeof b, "%m-%d %H:%M:%S", &tmv);
+            fprintf(gLogFile, "[%s] logging enabled\n", b);
+            fflush(gLogFile);
+        }
+    } else if (!shouldLog && gLogFile) {
+        time_t t = time(NULL); struct tm tmv; localtime_r(&t, &tmv);
+        char b[24]; strftime(b, sizeof b, "%m-%d %H:%M:%S", &tmv);
+        fprintf(gLogFile, "[%s] logging disabled\n", b);
+        fclose(gLogFile);
+        gLogFile = NULL;
+    }
+}
+
 #define TSLOG(...) do { \
+    if (!gLogFile) break; \
     time_t _t = time(NULL); struct tm _tm; localtime_r(&_t, &_tm); \
     char _b[24]; strftime(_b, sizeof _b, "%m-%d %H:%M:%S", &_tm); \
-    fprintf(stderr, "[%s] ", _b); fprintf(stderr, __VA_ARGS__); \
+    fprintf(gLogFile, "[%s] ", _b); fprintf(gLogFile, __VA_ARGS__); \
+    fflush(gLogFile); \
 } while (0)
 
 static void stopHandler(int sig) { (void)sig; gStop = 1; }
@@ -422,6 +451,7 @@ int LEDHelperMain(int argc, char *argv[])
 
     installFatalSignalLogging();
     atexit(atexitLogger);
+    updateLogFile();
 
     loadConfig();
     lockState();
@@ -462,6 +492,7 @@ int LEDHelperMain(int argc, char *argv[])
                                                 unlockState();
                                             }
                                             if (ticks % 60 == 0) {
+                                                updateLogFile(); // toggle log on/off live
                                                 TSLOG("[tempbar-led] alive, pid=%d\n", getpid());
                                             }
                                             if (gStop) CFRunLoopStop(CFRunLoopGetMain());

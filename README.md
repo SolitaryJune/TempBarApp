@@ -38,6 +38,15 @@ app 会直接弹出一次管理员授权框，输入密码即完成安装，之�
 辅助工具就是 app 自身的二进制以 `--led-helper` 参数运行，不含任何额外
 组件——温度监控与灯开关是一个整体，无需单独安装或卸载任何模块。
 
+**默认不写任何日志**（避免无谓的磁盘写入）。需要诊断时，临时开启：
+
+```bash
+sudo touch "/Library/Application Support/TempBarApp/debug"   # 开启日志
+sudo rm    "/Library/Application Support/TempBarApp/debug"   # 关闭日志
+```
+
+日志写在同目录的 `helper.log`，一分钟内生效，无需重启。
+
 如果彻底不需要了，想完全清除后台辅助工具，退出 app 后在终端执行：
 
 ```bash

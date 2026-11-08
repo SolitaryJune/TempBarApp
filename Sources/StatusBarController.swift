@@ -121,9 +121,19 @@ final class StatusBarController: NSObject {
 
         guard let status = MagSafeLEDClient.shared.status(),
               (status["ok"] as? Bool) == true else {
-            menu.addItem(actionItem("启用 MagSafe 灯控制…(需一次管理员授权)", represented: nil, action: #selector(ledInstallClicked)))
+            deadStatusCount += 1
+            // self-heal: daemon vanished but the helper is still installed —
+            // re-run the installer automatically (one admin dialog)
+            if deadStatusCount == 3, MagSafeLEDInstaller.isPlistInstalled(),
+               !MagSafeLEDPrefs.helperRemovedByUser, !installCancelledThisSession {
+                deadStatusCount = 0
+                installHelper()
+            } else {
+                menu.addItem(actionItem("启用 MagSafe 灯控制…(需一次管理员授权)", represented: nil, action: #selector(ledInstallClicked)))
+            }
             return
         }
+        deadStatusCount = 0
 
         let mode = status["mode"] as? String ?? "system"
         menu.addItem(checkItem("系统默认", active: mode == "system", represented: "system", action: #selector(ledSetMode(_:))))
@@ -177,6 +187,8 @@ final class StatusBarController: NSObject {
     // MARK: MagSafe LED helper lifecycle
 
     private var installCancelledThisSession = false
+    private var installInFlight = false
+    private var deadStatusCount = 0
 
     /// Waits for the auto-started daemon, then auto-installs it (admin dialog)
     /// unless the user explicitly uninstalled it or cancelled earlier.
@@ -205,10 +217,13 @@ final class StatusBarController: NSObject {
     /// Runs the privileged installer (admin authorization dialog); on success
     /// waits for the daemon socket and pushes the stored settings.
     private func installHelper() {
+        guard !installInFlight else { return }
+        installInFlight = true
         DispatchQueue.global().async { [weak self] in
             let ok = MagSafeLEDInstaller.install()
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.installInFlight = false
                 if ok {
                     MagSafeLEDPrefs.helperRemovedByUser = false
                     // no config push here: the daemon persists its own settings

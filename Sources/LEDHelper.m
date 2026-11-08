@@ -580,6 +580,10 @@ int LEDHelperMain(int argc, char *argv[])
                                         CFAbsoluteTimeGetCurrent() + 1.0, 1.0, 0, 0,
                                         ^(CFRunLoopTimerRef timer) {
                                             (void)timer;
+                                            static int heartbeat = 0;
+                                            if (++heartbeat % 60 == 0) {
+                                                fprintf(stderr, "[tempbar-led] alive, pid=%d\n", getpid());
+                                            }
                                             if (gStop) CFRunLoopStop(CFRunLoopGetMain());
                                         });
     CFRunLoopAddTimer(CFRunLoopGetMain(), stopTimer, kCFRunLoopDefaultMode);

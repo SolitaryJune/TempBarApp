@@ -194,7 +194,8 @@ enum MagSafeLEDInstaller {
         XML
         chmod 644 "$PLIST"
         launchctl bootout 'system/\(daemonLabel)' 2>/dev/null || true
-        launchctl bootstrap system "$PLIST"
+        sleep 1
+        launchctl bootstrap system "$PLIST" || (sleep 2 && launchctl bootstrap system "$PLIST")
         """
     }
 

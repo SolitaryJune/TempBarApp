@@ -27,6 +27,7 @@
 #import <math.h>
 #import <string.h>
 #import <errno.h>
+#import <time.h>
 
 static NSString * const kVersion     = @"1.2";
 static NSString * const kSocketPath  = @"/var/run/tempbar-led.sock";
@@ -71,14 +72,21 @@ static volatile sig_atomic_t gStop = 0;
 static io_connect_t gSMC = 0;
 static UInt8 gLEDKeySize = 1;
 
+// Timestamped logging — the helper log is the only forensics we have.
+#define TSLOG(...) do { \
+    time_t _t = time(NULL); struct tm _tm; localtime_r(&_t, &_tm); \
+    char _b[24]; strftime(_b, sizeof _b, "%m-%d %H:%M:%S", &_tm); \
+    fprintf(stderr, "[%s] ", _b); fprintf(stderr, __VA_ARGS__); \
+} while (0)
+
 static void stopHandler(int sig) { (void)sig; gStop = 1; }
 
 // Forensics: log every catchable signal with its sender, then die.
 static void fatalSignalHandler(int sig, siginfo_t *info, void *context)
 {
     (void)context;
-    fprintf(stderr, "[tempbar-led] FATAL signal %d from pid %d code %d\n",
-            sig, info->si_pid, info->si_code);
+    TSLOG("[tempbar-led] FATAL signal %d from pid %d code %d\n",
+          sig, info->si_pid, info->si_code);
     _exit(128 + sig);
 }
 
@@ -97,7 +105,7 @@ static void installFatalSignalLogging(void)
 
 static void atexitLogger(void)
 {
-    fprintf(stderr, "[tempbar-led] atexit, stopFlag=%d\n", (int)gStop);
+    TSLOG("[tempbar-led] atexit, stopFlag=%d\n", (int)gStop);
 }
 
 static void lockState(void)   { pthread_mutex_lock(&gStateLock); }
@@ -461,11 +469,11 @@ static void *serverLoop(void *unused)
     }
     chmod(path, 0666); // the menu bar app runs as the logged-in user
     if (listen(fd, 8) != 0) {
-        fprintf(stderr, "[tempbar-led] listen failed errno=%d\n", errno);
+        TSLOG("[tempbar-led] listen failed errno=%d\n", errno);
         close(fd);
         return NULL;
     }
-    fprintf(stderr, "[tempbar-led] socket server ready on %s\n", path);
+    TSLOG("[tempbar-led] socket server ready on %s\n", path);
 
     while (!gStop) {
         int client = accept(fd, NULL, NULL);
@@ -551,7 +559,7 @@ int LEDHelperMain(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN); // clients may disconnect mid-conversation
 
     kern_return_t openResult = smcOpen();
-    fprintf(stderr, "[tempbar-led] daemon starting, pid=%d smcOpen=%08x\n", getpid(), openResult);
+    TSLOG("[tempbar-led] daemon starting, pid=%d smcOpen=%08x\n", getpid(), openResult);
     if (openResult != KERN_SUCCESS) return 1;
 
     installFatalSignalLogging();
@@ -582,7 +590,7 @@ int LEDHelperMain(int argc, char *argv[])
                                             (void)timer;
                                             static int heartbeat = 0;
                                             if (++heartbeat % 60 == 0) {
-                                                fprintf(stderr, "[tempbar-led] alive, pid=%d\n", getpid());
+                                                TSLOG("[tempbar-led] alive, pid=%d\n", getpid());
                                             }
                                             if (gStop) CFRunLoopStop(CFRunLoopGetMain());
                                         });
@@ -590,7 +598,7 @@ int LEDHelperMain(int argc, char *argv[])
     CFRunLoopRun();
     CFRelease(stopTimer);
 
-    fprintf(stderr, "[tempbar-led] daemon exiting, pid=%d stopFlag=%d\n", getpid(), (int)gStop);
+    TSLOG("[tempbar-led] daemon exiting, pid=%d stopFlag=%d\n", getpid(), (int)gStop);
     IOServiceClose(gSMC);
     return 0;
 }

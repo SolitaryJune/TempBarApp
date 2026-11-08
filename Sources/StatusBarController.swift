@@ -121,19 +121,9 @@ final class StatusBarController: NSObject {
 
         guard let status = MagSafeLEDClient.shared.status(),
               (status["ok"] as? Bool) == true else {
-            deadStatusCount += 1
-            // self-heal: daemon vanished but the helper is still installed —
-            // re-run the installer automatically (one admin dialog)
-            if deadStatusCount == 3, MagSafeLEDInstaller.isPlistInstalled(),
-               !MagSafeLEDPrefs.helperRemovedByUser, !installCancelledThisSession {
-                deadStatusCount = 0
-                installHelper()
-            } else {
-                menu.addItem(actionItem("启用 MagSafe 灯控制…(需一次管理员授权)", represented: nil, action: #selector(ledInstallClicked)))
-            }
+            menu.addItem(actionItem("启用 MagSafe 灯控制…(需一次管理员授权)", represented: nil, action: #selector(ledInstallClicked)))
             return
         }
-        deadStatusCount = 0
 
         let mode = status["mode"] as? String ?? "system"
         menu.addItem(checkItem("系统默认", active: mode == "system", represented: "system", action: #selector(ledSetMode(_:))))
@@ -188,13 +178,14 @@ final class StatusBarController: NSObject {
 
     private var installCancelledThisSession = false
     private var installInFlight = false
-    private var deadStatusCount = 0
+    private var autoRepairAttempts = 0
 
     /// Waits for the auto-started daemon, then auto-installs it (admin dialog)
     /// unless the user explicitly uninstalled it or cancelled earlier.
     private func scheduleAutoSetup() {
         DispatchQueue.global().async { [weak self] in
-            for _ in 0..<8 where MagSafeLEDClient.shared.status() == nil {
+            // launchd throttled respawn can take 10 s+; wait up to 15 s
+            for _ in 0..<15 where MagSafeLEDClient.shared.status() == nil {
                 usleep(1_000_000)
             }
             DispatchQueue.main.async {
@@ -205,32 +196,43 @@ final class StatusBarController: NSObject {
                     self.refresh()
                     return
                 }
+                // Auto-prompt ONLY for the true first run (helper never
+                // installed, user never removed it). A daemon that later
+                // disappears is surfaced as a manual menu item instead —
+                // never an unrequested admin dialog.
+                if MagSafeLEDInstaller.isPlistInstalled() {
+                    self.refresh()
+                    return
+                }
                 if MagSafeLEDPrefs.helperRemovedByUser || self.installCancelledThisSession {
                     self.refresh()
                     return
                 }
-                self.installHelper()
+                self.installHelper(auto: true)
             }
         }
     }
 
-    /// Runs the privileged installer (admin authorization dialog); on success
-    /// waits for the daemon socket and pushes the stored settings.
-    private func installHelper() {
+    /// Runs the privileged installer (admin authorization dialog), then waits
+    /// up to 30 s for the daemon socket. Success/failure is judged on the
+    /// socket being live, not on the script exit code.
+    private func installHelper(auto: Bool) {
         guard !installInFlight else { return }
+        if auto && autoRepairAttempts >= 2 { return } // dialog-loop breaker
         installInFlight = true
         DispatchQueue.global().async { [weak self] in
-            let ok = MagSafeLEDInstaller.install()
+            let ok = MagSafeLEDInstaller.install() && MagSafeLEDClient.shared.waitUpTo(seconds: 30)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.installInFlight = false
                 if ok {
                     MagSafeLEDPrefs.helperRemovedByUser = false
-                    // no config push here: the daemon persists its own settings
+                    self.installCancelledThisSession = false
                 } else {
                     // cancelled or failed: don't auto-prompt again this session
                     self.installCancelledThisSession = true
                 }
+                if auto { self.autoRepairAttempts += 1 }
                 self.refresh()
             }
         }
@@ -276,7 +278,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func ledInstallClicked() {
-        installHelper()
+        installHelper(auto: false)
     }
 
     @objc private func ledUninstallClicked() {

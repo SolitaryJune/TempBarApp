@@ -70,6 +70,18 @@ final class MagSafeLEDClient {
         send(["cmd": "get"])
     }
 
+    /// Polls the socket until it responds or the timeout elapses.
+    /// Guards against judging the daemon "lost" while it is still starting
+    /// up (launchd spawn latency + throttled respawn can exceed 10 s).
+    func waitUpTo(seconds: Double) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if status() != nil { return true }
+            usleep(500_000)
+        }
+        return status() != nil
+    }
+
     @discardableResult
     func set(mode: String, color: String, period: Double, wave: String) -> Bool {
         (send(["cmd": "set", "mode": mode, "color": color, "period": period, "wave": wave])?["ok"] as? Bool) == true

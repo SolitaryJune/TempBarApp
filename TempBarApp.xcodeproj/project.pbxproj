@@ -12,6 +12,8 @@
 	006000000000000000000002 /* TemperatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 004000000000000000000002 /* TemperatureModel.swift */; };
 	006000000000000000000003 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 004000000000000000000003 /* main.swift */; };
 	006000000000000000000004 /* TemperatureReader.m in Sources */ = {isa = PBXBuildFile; fileRef = 004000000000000000000005 /* TemperatureReader.m */; };
+	006000000000000000000007 /* LEDHelper.m in Sources */ = {isa = PBXBuildFile; fileRef = 00400000000000000000000D /* LEDHelper.m */; };
+	006000000000000000000008 /* MagSafeLED.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00400000000000000000000E /* MagSafeLED.swift */; };
 	006000000000000000000005 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00400000000000000000000A /* Cocoa.framework */; };
 	006000000000000000000006 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00400000000000000000000B /* IOKit.framework */; };
 /* End PBXBuildFile section */
@@ -26,6 +28,9 @@
 	004000000000000000000006 /* TempBarApp-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "TempBarApp-Bridging-Header.h"; sourceTree = "<group>"; };
 	004000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 	004000000000000000000008 /* TempBarApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TempBarApp.entitlements; sourceTree = "<group>"; };
+	00400000000000000000000C /* LEDHelper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LEDHelper.h; sourceTree = "<group>"; };
+	00400000000000000000000D /* LEDHelper.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LEDHelper.m; sourceTree = "<group>"; };
+	00400000000000000000000E /* MagSafeLED.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagSafeLED.swift; sourceTree = "<group>"; };
 	004000000000000000000009 /* TempBarApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = TempBarApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 	00400000000000000000000A /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 	00400000000000000000000B /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
@@ -70,6 +75,9 @@
 			004000000000000000000003 /* main.swift */,
 			004000000000000000000004 /* TemperatureReader.h */,
 			004000000000000000000005 /* TemperatureReader.m */,
+			00400000000000000000000C /* LEDHelper.h */,
+			00400000000000000000000D /* LEDHelper.m */,
+			00400000000000000000000E /* MagSafeLED.swift */,
 			004000000000000000000006 /* TempBarApp-Bridging-Header.h */,
 			004000000000000000000007 /* Info.plist */,
 			004000000000000000000008 /* TempBarApp.entitlements */,
@@ -149,6 +157,8 @@
 			006000000000000000000002 /* TemperatureModel.swift in Sources */,
 			006000000000000000000003 /* main.swift in Sources */,
 			006000000000000000000004 /* TemperatureReader.m in Sources */,
+			006000000000000000000007 /* LEDHelper.m in Sources */,
+			006000000000000000000008 /* MagSafeLED.swift in Sources */,
 		);
 		runOnlyForDeploymentPostprocessing = 0;
 	};
@@ -275,7 +285,7 @@
 			CODE_SIGN_IDENTITY = "-";
 			CODE_SIGN_STYLE = Automatic;
 			COMBINE_HIDPI_IMAGES = YES;
-			CURRENT_PROJECT_VERSION = 2;
+			CURRENT_PROJECT_VERSION = 3;
 			DEVELOPMENT_TEAM = "";
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = Sources/Info.plist;
@@ -284,7 +294,7 @@
 				"@executable_path/../Frameworks",
 			);
 			MACOSX_DEPLOYMENT_TARGET = 13.0;
-			MARKETING_VERSION = 1.1;
+			MARKETING_VERSION = 1.2;
 			PRODUCT_BUNDLE_IDENTIFIER = "local.TempBarApp";
 			PRODUCT_NAME = "$(TARGET_NAME)";
 			SWIFT_EMIT_LOC_STRINGS = YES;
@@ -300,7 +310,7 @@
 			CODE_SIGN_IDENTITY = "-";
 			CODE_SIGN_STYLE = Automatic;
 			COMBINE_HIDPI_IMAGES = YES;
-			CURRENT_PROJECT_VERSION = 2;
+			CURRENT_PROJECT_VERSION = 3;
 			DEVELOPMENT_TEAM = "";
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = Sources/Info.plist;
@@ -309,7 +319,7 @@
 				"@executable_path/../Frameworks",
 			);
 			MACOSX_DEPLOYMENT_TARGET = 13.0;
-			MARKETING_VERSION = 1.1;
+			MARKETING_VERSION = 1.2;
 			PRODUCT_BUNDLE_IDENTIFIER = "local.TempBarApp";
 			PRODUCT_NAME = "$(TARGET_NAME)";
 			SWIFT_EMIT_LOC_STRINGS = YES;

@@ -98,13 +98,6 @@ enum MagSafeLEDPrefs {
         set { d.set(newValue, forKey: "LEDMode") }
     }
 
-    /// Set when the user deliberately uninstalled the helper, so app launches
-    /// don't nag for admin authorization again (menu offers a manual retry).
-    static var helperRemovedByUser: Bool {
-        get { d.bool(forKey: "LEDHelperRemovedByUser") }
-        set { d.set(newValue, forKey: "LEDHelperRemovedByUser") }
-    }
-
     static func syncToDaemon() {
         MagSafeLEDClient.shared.set(mode: mode)
     }
@@ -130,11 +123,6 @@ enum MagSafeLEDInstaller {
     static func install() -> Bool {
         runPrivilegedScript(installScript(),
                             prompt: "TempBarApp 需要安装 MagSafe 灯辅助工具(仅需授权一次)")
-    }
-
-    static func uninstall() -> Bool {
-        runPrivilegedScript(uninstallScript(),
-                            prompt: "卸载辅助工具需要管理员权限,LED 将恢复系统默认")
     }
 
     private static func runPrivilegedScript(_ script: String, prompt: String) -> Bool {
@@ -193,19 +181,6 @@ enum MagSafeLEDInstaller {
         launchctl bootout 'system/\(daemonLabel)' 2>/dev/null || true
         sleep 1
         launchctl bootstrap system "$PLIST" || (sleep 2 && launchctl bootstrap system "$PLIST")
-        """
-    }
-
-    private static func uninstallScript() -> String {
-        let bin = appBinaryPath
-        return """
-        #!/bin/bash
-        APP_BIN='\(bin)'
-        "$APP_BIN" --led-once --mode system 2>/dev/null || true
-        launchctl bootout 'system/\(daemonLabel)' 2>/dev/null || true
-        rm -f '/Library/LaunchDaemons/\(daemonLabel).plist'
-        rm -rf '/Library/Application Support/TempBarApp'
-        rm -f /var/run/tempbar-led.sock
         """
     }
 }

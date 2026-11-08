@@ -36,8 +36,14 @@ LED 的写入由一个无界面的后台辅助工具完成——因为写 SMC �
 权限。**app 启动时会自动请求授权**：首次使用（或辅助工具被移除后）启动
 app 会直接弹出一次管理员授权框，输入密码即完成安装，之后启动不再提示。
 辅助工具就是 app 自身的二进制以 `--led-helper` 参数运行，不含任何额外
-组件。不想用了在菜单里点「卸载辅助工具…」即可一键清除（LED 恢复系统
-默认，后台辅助工具与配置全部移除）。
+组件——温度监控与灯开关是一个整体，无需单独安装或卸载任何模块。
+
+如果彻底不需要了，想完全清除后台辅助工具，退出 app 后在终端执行：
+
+```bash
+sudo launchctl bootout system/local.TempBarApp.led-helper
+sudo rm /Library/LaunchDaemons/local.TempBarApp.led-helper.plist
+```
 
 ## 安装
 

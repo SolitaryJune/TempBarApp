@@ -126,47 +126,10 @@ final class StatusBarController: NSObject {
         }
 
         let mode = status["mode"] as? String ?? "system"
-        menu.addItem(checkItem("系统默认", active: mode == "system", represented: "system", action: #selector(ledSetMode(_:))))
-        menu.addItem(checkItem("关闭", active: mode == "off", represented: "off", action: #selector(ledSetMode(_:))))
-        menu.addItem(checkItem("呼吸模式", active: mode == "breathing", represented: "breathing", action: #selector(ledSetMode(_:))))
-        menu.addItem(breathingSettingsItem(status))
+        menu.addItem(checkItem("开(系统默认)", active: mode != "off", represented: "system", action: #selector(ledSetMode(_:))))
+        menu.addItem(checkItem("关", active: mode == "off", represented: "off", action: #selector(ledSetMode(_:))))
         menu.addItem(.separator())
         menu.addItem(actionItem("卸载辅助工具…", represented: nil, action: #selector(ledUninstallClicked)))
-    }
-
-    private func breathingSettingsItem(_ status: [String: Any]) -> NSMenuItem {
-        let color = status["color"] as? String ?? "auto"
-        let period = (status["period"] as? Double) ?? MagSafeLEDPrefs.period
-        let wave = status["wave"] as? String ?? "sine"
-
-        let sub = NSMenu()
-        sub.autoenablesItems = false
-
-        sub.addItem(blackItem("呼吸颜色:"))
-        sub.addItem(checkItem("自动(充电橙 / 充满绿)", active: color == "auto", represented: "auto", action: #selector(ledSetColor(_:))))
-        sub.addItem(checkItem("绿色", active: color == "green", represented: "green", action: #selector(ledSetColor(_:))))
-        sub.addItem(checkItem("橙色", active: color == "amber", represented: "amber", action: #selector(ledSetColor(_:))))
-
-        sub.addItem(.separator())
-        sub.addItem(blackItem("呼吸速度:"))
-        sub.addItem(checkItem("慢(6 秒)", active: abs(period - 6.0) < 0.05, represented: "6", action: #selector(ledSetSpeed(_:))))
-        sub.addItem(checkItem("中(4 秒)", active: abs(period - 4.0) < 0.05, represented: "4", action: #selector(ledSetSpeed(_:))))
-        sub.addItem(checkItem("快(2.5 秒)", active: abs(period - 2.5) < 0.05, represented: "2.5", action: #selector(ledSetSpeed(_:))))
-        sub.addItem(checkItem("自定义…", active: ![6.0, 4.0, 2.5].contains { abs(period - $0) < 0.05 },
-                               represented: "", action: #selector(ledCustomSpeedClicked)))
-
-        sub.addItem(.separator())
-        sub.addItem(blackItem("波形:"))
-        sub.addItem(checkItem("正弦", active: wave == "sine", represented: "sine", action: #selector(ledSetWave(_:))))
-        sub.addItem(checkItem("线性", active: wave == "linear", represented: "linear", action: #selector(ledSetWave(_:))))
-
-        let parent = NSMenuItem()
-        parent.attributedTitle = NSAttributedString(
-            string: "呼吸设置…",
-            attributes: [.foregroundColor: NSColor.black]
-        )
-        parent.submenu = sub
-        return parent
     }
 
     private func applyLEDConfig() {
@@ -240,40 +203,6 @@ final class StatusBarController: NSObject {
 
     @objc private func ledSetMode(_ sender: NSMenuItem) {
         MagSafeLEDPrefs.mode = sender.representedObject as? String ?? "system"
-        applyLEDConfig()
-    }
-
-    @objc private func ledSetColor(_ sender: NSMenuItem) {
-        MagSafeLEDPrefs.color = sender.representedObject as? String ?? "auto"
-        applyLEDConfig()
-    }
-
-    @objc private func ledSetSpeed(_ sender: NSMenuItem) {
-        if let text = sender.representedObject as? String, let period = Double(text) {
-            MagSafeLEDPrefs.period = period
-            applyLEDConfig()
-        }
-    }
-
-    @objc private func ledCustomSpeedClicked() {
-        let alert = NSAlert()
-        alert.messageText = "自定义呼吸周期"
-        alert.informativeText = "输入一个完整呼吸周期(亮→灭→亮)的时长,范围 1–6 秒。"
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        input.doubleValue = MagSafeLEDPrefs.period
-        alert.accessoryView = input
-        if alert.runModal() == .alertFirstButtonReturn {
-            let value = input.doubleValue
-            guard value >= 1.0, value <= 6.0 else { return }
-            MagSafeLEDPrefs.period = value
-            applyLEDConfig()
-        }
-    }
-
-    @objc private func ledSetWave(_ sender: NSMenuItem) {
-        MagSafeLEDPrefs.wave = sender.representedObject as? String ?? "sine"
         applyLEDConfig()
     }
 

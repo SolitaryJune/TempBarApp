@@ -7,6 +7,7 @@
 //  the menu bar app talks to it over a local unix socket.
 //
 //  ACLC values: 0 = macOS default, 1 = off, 3 = green, 4 = amber.
+//  This helper only ever writes 0 (system default) or 1 (off).
 //
 
 #import "LEDHelper.h"
@@ -24,12 +25,11 @@
 #import <signal.h>
 #import <unistd.h>
 #import <fcntl.h>
-#import <math.h>
-#import <string.h>
 #import <errno.h>
 #import <time.h>
+#import <string.h>
 
-static NSString * const kVersion     = @"1.2";
+static NSString * const kVersion     = @"1.3";
 static NSString * const kSocketPath  = @"/var/run/tempbar-led.sock";
 static NSString * const kSupportDir  = @"/Library/Application Support/TempBarApp";
 static NSString * const kConfigPath  = @"/Library/Application Support/TempBarApp/led-config.json";
@@ -37,36 +37,16 @@ static NSString * const kDaemonLabel = @"local.TempBarApp.led-helper";
 
 static const char kLEDKey[] = "ACLC";
 
-// ACLC value space (documented by the MagHue project; verified on this Mac)
-static const UInt8 kLEDSystemValue = 0;
-static const UInt8 kLEDOffValue    = 1;
-static const UInt8 kLEDGreenValue  = 3;
-static const UInt8 kLEDAmberValue  = 4;
+static const UInt8 kLEDSystemValue = 0; // hand control back to macOS
+static const UInt8 kLEDOffValue    = 1; // LED dark
 
-// The LED has no brightness control, so "breathing" is software PWM:
-// ACLC is toggled between off and the color value with a duty cycle that
-// follows an envelope over the configured period.
-static const useconds_t kTickMicros = 5000; // 5 ms -> 200 Hz tick rate
-static const int        kPWMSteps   = 3;    // ~67 Hz PWM, 4 brightness steps
-
-static NSString * const kModeSystem    = @"system";
-static NSString * const kModeOff       = @"off";
-static NSString * const kModeStatic    = @"static";
-static NSString * const kModeBreathing = @"breathing";
-static NSString * const kColorAuto     = @"auto";
-static NSString * const kColorGreen    = @"green";
-static NSString * const kColorAmber    = @"amber";
-static NSString * const kWaveSine      = @"sine";
-static NSString * const kWaveLinear    = @"linear";
+static NSString * const kModeSystem = @"system";
+static NSString * const kModeOff    = @"off";
 
 #pragma mark - Shared state
 
 static pthread_mutex_t gStateLock = PTHREAD_MUTEX_INITIALIZER;
-
-static NSString *gMode   = nil;
-static NSString *gColor  = nil;
-static NSString *gWave   = nil;
-static double     gPeriod = 4.0;
+static NSString *gMode = nil; // kModeSystem / kModeOff
 
 static volatile sig_atomic_t gStop = 0;
 static io_connect_t gSMC = 0;
@@ -81,7 +61,11 @@ static UInt8 gLEDKeySize = 1;
 
 static void stopHandler(int sig) { (void)sig; gStop = 1; }
 
-// Forensics: log every catchable signal with its sender, then die.
+static void lockState(void)   { pthread_mutex_lock(&gStateLock); }
+static void unlockState(void) { pthread_mutex_unlock(&gStateLock); }
+
+#pragma mark - Forensics
+
 static void fatalSignalHandler(int sig, siginfo_t *info, void *context)
 {
     (void)context;
@@ -107,9 +91,6 @@ static void atexitLogger(void)
 {
     TSLOG("[tempbar-led] atexit, stopFlag=%d\n", (int)gStop);
 }
-
-static void lockState(void)   { pthread_mutex_lock(&gStateLock); }
-static void unlockState(void) { pthread_mutex_unlock(&gStateLock); }
 
 #pragma mark - SMC access
 
@@ -149,8 +130,8 @@ typedef struct {
 } SMCParam;
 
 // SMC user-client command bytes
-static const char kSMCReadBytes  = 5;
-static const char kSMCWriteBytes = 6;
+static const char kSMCReadBytes   = 5;
+static const char kSMCWriteBytes  = 6;
 static const char kSMCReadKeyInfo = 9;
 // IOKit user-client selector for all SMC key operations
 static const int kSMCSelector = 2;
@@ -179,27 +160,6 @@ static kern_return_t smcKeyInfo(UInt32 packedKey, UInt32 *outSize)
     in.key = packedKey;
     kern_return_t kr = smcCall(kSMCReadKeyInfo, &in, &out);
     if (kr == KERN_SUCCESS) *outSize = out.keyInfo.dataSize;
-    return kr;
-}
-
-static kern_return_t smcReadKey(const char key[4], UInt8 outBytes[32], UInt32 *outSize)
-{
-    UInt32 packed = packKey(key);
-    UInt32 size = 0;
-    kern_return_t kr = smcKeyInfo(packed, &size);
-    if (kr != KERN_SUCCESS) return kr;
-    if (size == 0 || size > 32) return kIOReturnError;
-
-    SMCParam in, out;
-    memset(&in, 0, sizeof in);
-    memset(&out, 0, sizeof out);
-    in.key = packed;
-    in.keyInfo.dataSize = size;
-    kr = smcCall(kSMCReadBytes, &in, &out);
-    if (kr == KERN_SUCCESS) {
-        memcpy(outBytes, out.bytes, size);
-        *outSize = size;
-    }
     return kr;
 }
 
@@ -236,66 +196,30 @@ static BOOL ledWrite(UInt8 value)
     return smcWriteKey(kLEDKey, buffer, gLEDKeySize) == KERN_SUCCESS;
 }
 
-#pragma mark - Battery state
-
-static BOOL batteryState(BOOL *outExternal, BOOL *outCharging)
-{
-    if (outExternal) *outExternal = NO;
-    if (outCharging) *outCharging = NO;
-    io_service_t battery = IOServiceGetMatchingService(kIOMainPortDefault,
-                                                       IOServiceMatching("AppleSmartBattery"));
-    if (!battery) return NO;
-    CFMutableDictionaryRef props = NULL;
-    kern_return_t kr = IORegistryEntryCreateCFProperties(battery, &props, kCFAllocatorDefault, 0);
-    IOObjectRelease(battery);
-    if (kr != KERN_SUCCESS || !props) return NO;
-
-    NSNumber *external = (__bridge NSNumber *)CFDictionaryGetValue(props, CFSTR("ExternalConnected"));
-    NSNumber *charging = (__bridge NSNumber *)CFDictionaryGetValue(props, CFSTR("IsCharging"));
-    if (external && outExternal) *outExternal = external.boolValue;
-    if (charging && outCharging) *outCharging = charging.boolValue;
-    CFRelease(props);
-    return YES;
-}
-
 #pragma mark - Config + apply
-
-static BOOL validMode(NSString *mode)
-{
-    return [mode isEqualToString:kModeSystem] ||
-           [mode isEqualToString:kModeOff]    ||
-           [mode isEqualToString:kModeStatic] ||
-           [mode isEqualToString:kModeBreathing];
-}
 
 static void loadConfig(void)
 {
     lockState();
     gMode = kModeSystem;
-    gColor = kColorAuto;
-    gWave = kWaveSine;
-    gPeriod = 4.0;
     NSDictionary *d = nil;
     NSData *configData = [NSData dataWithContentsOfFile:kConfigPath];
     if (configData) {
         d = [NSJSONSerialization JSONObjectWithData:configData options:0 error:NULL];
     }
     if ([d isKindOfClass:[NSDictionary class]]) {
-        NSString *m = d[@"mode"];   if ([m isKindOfClass:NSString.class]) gMode = m;
-        NSString *c = d[@"color"];  if ([c isKindOfClass:NSString.class]) gColor = c;
-        NSString *w = d[@"wave"];   if ([w isKindOfClass:NSString.class]) gWave = w;
-        NSNumber *p = d[@"period"]; if ([p isKindOfClass:NSNumber.class]) gPeriod = MIN(MAX(p.doubleValue, 1.0), 6.0);
-        if (!validMode(gMode)) gMode = kModeSystem;
+        NSString *m = d[@"mode"];
+        if ([m isKindOfClass:NSString.class] &&
+            ([m isEqualToString:kModeSystem] || [m isEqualToString:kModeOff])) {
+            gMode = m;
+        }
     }
     unlockState();
 }
 
 static void saveConfigLocked(void)
 {
-    NSDictionary *d = @{ @"mode": gMode ?: kModeSystem,
-                         @"color": gColor ?: kColorAuto,
-                         @"period": @(gPeriod),
-                         @"wave": gWave ?: kWaveSine };
+    NSDictionary *d = @{ @"mode": gMode ?: kModeSystem };
     NSData *json = [NSJSONSerialization dataWithJSONObject:d options:0 error:NULL];
     if (!json) return;
     [[NSFileManager defaultManager] createDirectoryAtPath:kSupportDir
@@ -305,96 +229,18 @@ static void saveConfigLocked(void)
     [json writeToFile:kConfigPath atomically:YES];
 }
 
-// Resolved LED color for "auto": amber while charging, green when full.
-// Returns nil when running on battery (LED is dark anyway).
-static NSString *onColorNameLocked(void)
-{
-    if ([gColor isEqualToString:kColorGreen]) return kColorGreen;
-    if ([gColor isEqualToString:kColorAmber]) return kColorAmber;
-    BOOL external = NO, charging = NO;
-    batteryState(&external, &charging);
-    if (!external) return nil;
-    return charging ? kColorAmber : kColorGreen;
-}
-
 static void applyLocked(void)
 {
-    if ([gMode isEqualToString:kModeBreathing]) return; // breathing thread owns the LED
-
-    UInt8 value = kLEDSystemValue;
-    if ([gMode isEqualToString:kModeOff]) {
-        value = kLEDOffValue;
-    } else if ([gMode isEqualToString:kModeStatic]) {
-        NSString *color = onColorNameLocked();
-        value = [color isEqualToString:kColorGreen] ? kLEDGreenValue : kLEDAmberValue;
-    }
-    ledWrite(value);
-}
-
-#pragma mark - Breathing thread
-
-static void *breathingLoop(void *unused)
-{
-    (void)unused;
-    int tick = 0;
-    double t = 0.0; // seconds into the current envelope cycle
-    NSString *cycleColor = nil;
-
-    while (!gStop) {
-        lockState();
-        if (![gMode isEqualToString:kModeBreathing]) {
-            unlockState();
-            t = 0.0;
-            tick = 0;
-            usleep(100 * 1000); // idle while another mode owns the LED
-            continue;
-        }
-
-        double period = gPeriod;
-        NSString *wave = gWave;
-        if (tick % 10 == 0) cycleColor = onColorNameLocked(); // track charging every ~50 ms
-
-        double phase = t / period; // 0..1
-        double envelope;
-        if ([wave isEqualToString:kWaveLinear]) {
-            envelope = phase < 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0;
-        } else {
-            envelope = 0.5 - 0.5 * cos(2.0 * M_PI * phase);
-        }
-        int onCount = (int)lround(envelope * kPWMSteps);
-        int slot = tick % kPWMSteps;
-        UInt8 value = kLEDOffValue;
-        if (slot < onCount && cycleColor != nil) {
-            value = [cycleColor isEqualToString:kColorGreen] ? kLEDGreenValue : kLEDAmberValue;
-        }
-        ledWrite(value);
-        unlockState();
-
-        tick++;
-        t += kTickMicros / 1000000.0;
-        if (t >= period) {
-            t -= period;
-            tick = 0;
-        }
-        usleep(kTickMicros);
-    }
-    return NULL;
+    ledWrite([gMode isEqualToString:kModeOff] ? kLEDOffValue : kLEDSystemValue);
 }
 
 #pragma mark - Socket server
 
 static NSDictionary *statusDictLocked(void)
 {
-    BOOL external = NO, charging = NO;
-    batteryState(&external, &charging);
     return @{ @"ok": @YES,
               @"version": kVersion,
-              @"mode": gMode ?: kModeSystem,
-              @"color": gColor ?: kColorAuto,
-              @"period": @(gPeriod),
-              @"wave": gWave ?: kWaveSine,
-              @"externalPower": @(external),
-              @"charging": @(charging) };
+              @"mode": gMode ?: kModeSystem };
 }
 
 static void writeJSONTo(int fd, NSDictionary *obj)
@@ -403,7 +249,7 @@ static void writeJSONTo(int fd, NSDictionary *obj)
     if (!json) return;
     NSMutableData *out = [NSMutableData dataWithData:json];
     [out appendBytes:"\n" length:1];
-    // MSG_NOSIGNAL: the menu bar app polls us every 5 s and may disconnect
+    // MSG_NOSIGNAL: the menu bar app polls us and may disconnect
     // mid-response — writing to that socket must not kill us with SIGPIPE.
     send(fd, out.bytes, out.length, MSG_NOSIGNAL);
 }
@@ -421,23 +267,17 @@ static void handleRequest(int fd, NSDictionary *req)
         unlockState();
     } else if ([cmd isEqualToString:@"set"]) {
         lockState();
-        NSString *m = req[@"mode"];   if ([m isKindOfClass:NSString.class]) gMode = m;
-        NSString *c = req[@"color"];  if ([c isKindOfClass:NSString.class]) gColor = c;
-        NSString *w = req[@"wave"];   if ([w isKindOfClass:NSString.class]) gWave = w;
-        NSNumber *p = req[@"period"]; if ([p isKindOfClass:NSNumber.class]) gPeriod = MIN(MAX(p.doubleValue, 1.0), 6.0);
-        if (![gColor isKindOfClass:NSString.class] ||
-            (![gColor isEqualToString:kColorAuto] &&
-             ![gColor isEqualToString:kColorGreen] &&
-             ![gColor isEqualToString:kColorAmber])) gColor = kColorAuto;
-        if (![gWave isEqualToString:kWaveSine] && ![gWave isEqualToString:kWaveLinear]) gWave = kWaveSine;
-        if (!validMode(gMode)) gMode = kModeSystem;
-        saveConfigLocked();
-        applyLocked();
+        NSString *m = req[@"mode"];
+        if ([m isKindOfClass:NSString.class] &&
+            ([m isEqualToString:kModeSystem] || [m isEqualToString:kModeOff])) {
+            gMode = m;
+            saveConfigLocked();
+            applyLocked();
+        }
         resp = statusDictLocked();
         unlockState();
     } else if ([cmd isEqualToString:@"probe"]) {
-        // Diagnostic: write a raw ACLC value. Meaningful in non-breathing modes
-        // (breathing rewrites the key on its next tick).
+        // Diagnostic: write a raw ACLC value (only the documented 0/1/3/4).
         NSNumber *v = req[@"value"];
         if ([v isKindOfClass:NSNumber.class] && v.intValue >= 0 && v.intValue <= 4) {
             ledWrite((UInt8)v.intValue);
@@ -520,29 +360,16 @@ static void powerChanged(void *context)
 static int runOneShot(int argc, char *argv[])
 {
     NSString *mode = kModeSystem;
-    NSString *color = kColorAuto;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             mode = [NSString stringWithUTF8String:argv[++i]];
-        } else if (strcmp(argv[i], "--color") == 0 && i + 1 < argc) {
-            color = [NSString stringWithUTF8String:argv[++i]];
         }
     }
     if (smcOpen() != KERN_SUCCESS) return 1;
-
-    UInt8 value = kLEDSystemValue;
-    if ([mode isEqualToString:kModeOff]) {
-        value = kLEDOffValue;
-    } else if ([mode isEqualToString:kModeStatic] || [mode isEqualToString:kModeBreathing]) {
-        if ([color isEqualToString:kColorGreen]) value = kLEDGreenValue;
-        else if ([color isEqualToString:kColorAmber]) value = kLEDAmberValue;
-        else {
-            BOOL external = NO, charging = NO;
-            batteryState(&external, &charging);
-            value = external ? (charging ? kLEDAmberValue : kLEDGreenValue) : kLEDOffValue;
-        }
-    }
-    ledWrite(value);
+    lockState();
+    gMode = [mode isEqualToString:kModeOff] ? kModeOff : kModeSystem;
+    applyLocked();
+    unlockState();
     IOServiceClose(gSMC);
     return 0;
 }
@@ -570,13 +397,11 @@ int LEDHelperMain(int argc, char *argv[])
     applyLocked();
     unlockState();
 
-    pthread_t breathThread;
     pthread_t socketThread;
-    pthread_create(&breathThread, NULL, breathingLoop, NULL);
     pthread_create(&socketThread, NULL, serverLoop, NULL);
 
     // Re-apply the configured LED when the charger is (un)plugged — macOS
-    // resets ACLC on power events, so breathing/static modes need a nudge.
+    // resets ACLC on power events.
     CFRunLoopSourceRef powerSource = IOPSNotificationCreateRunLoopSource(powerChanged, NULL);
     if (powerSource) {
         CFRunLoopAddSource(CFRunLoopGetMain(), powerSource, kCFRunLoopDefaultMode);

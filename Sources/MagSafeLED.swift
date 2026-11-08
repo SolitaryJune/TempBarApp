@@ -83,8 +83,8 @@ final class MagSafeLEDClient {
     }
 
     @discardableResult
-    func set(mode: String, color: String, period: Double, wave: String) -> Bool {
-        (send(["cmd": "set", "mode": mode, "color": color, "period": period, "wave": wave])?["ok"] as? Bool) == true
+    func set(mode: String) -> Bool {
+        (send(["cmd": "set", "mode": mode])?["ok"] as? Bool) == true
     }
 }
 
@@ -97,21 +97,6 @@ enum MagSafeLEDPrefs {
         get { d.string(forKey: "LEDMode") ?? "system" }
         set { d.set(newValue, forKey: "LEDMode") }
     }
-    static var color: String {
-        get { d.string(forKey: "LEDColor") ?? "auto" }
-        set { d.set(newValue, forKey: "LEDColor") }
-    }
-    static var wave: String {
-        get { d.string(forKey: "LEDWave") ?? "sine" }
-        set { d.set(newValue, forKey: "LEDWave") }
-    }
-    static var period: Double {
-        get {
-            let stored = d.double(forKey: "LEDPeriod")
-            return (stored >= 1.0 && stored <= 6.0) ? stored : 4.0
-        }
-        set { d.set(newValue, forKey: "LEDPeriod") }
-    }
 
     /// Set when the user deliberately uninstalled the helper, so app launches
     /// don't nag for admin authorization again (menu offers a manual retry).
@@ -121,7 +106,7 @@ enum MagSafeLEDPrefs {
     }
 
     static func syncToDaemon() {
-        MagSafeLEDClient.shared.set(mode: mode, color: color, period: period, wave: wave)
+        MagSafeLEDClient.shared.set(mode: mode)
     }
 }
 

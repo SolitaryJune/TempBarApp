@@ -321,6 +321,10 @@ static void *serverLoop(void *unused)
             usleep(50 * 1000);
             continue;
         }
+        // A client that never sends a newline must not wedge the single
+        // accept thread forever.
+        struct timeval readTimeout = { .tv_sec = 2, .tv_usec = 0 };
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &readTimeout, sizeof readTimeout);
         // read one newline-terminated JSON request
         NSMutableData *data = [NSMutableData data];
         char ch;

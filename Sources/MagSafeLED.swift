@@ -47,10 +47,14 @@ final class MagSafeLEDClient {
         }
         guard connected == 0 else { return nil }
 
-        let sent = body.withUnsafeBytes { raw -> Int in
+        // The daemon reads newline-terminated requests — the newline is part
+        // of the protocol; without it the helper blocks waiting for more data.
+        var payload = body
+        payload.append(0x0A)
+        let sent = payload.withUnsafeBytes { raw -> Int in
             Darwin.send(fd, raw.baseAddress, raw.count, 0)
         }
-        guard sent == body.count else { return nil }
+        guard sent == payload.count else { return nil }
 
         var received: [UInt8] = []
         var byte: UInt8 = 0
